@@ -1,0 +1,141 @@
+import pandas as pd
+import numpy as np
+
+# Updated Vector Calculations for Trading Bot
+
+# Example Selections and Parameters 
+
+#Read in and out for CSV - will change when using API calls
+IN_FILE_PATH = "raw_tqqq_data.csv"
+OUT_FILE_PATH = "new_processed_tqqq_data.csv"
+
+#Get from Users - these are only examples
+DEFAULT_SMOOTHING_SELECTIONS = ["sma", "wma", "hma"]
+DEFAULT_WINDOW_SIZES = [5, 8, 10]
+DEFAULT_LOG_OPTIONS = [True, False]
+DEFAULT_TIME_SHIFTS = [1, 2, 3]
+
+
+def read_tqqq_data(in_file_path: str) -> pd.DataFrame:
+    """
+    Read raw TQQQ CSV data, standardizes columns, sorts by timestamp
+    """
+
+    df = pd.read_csv(in_file_path)
+
+    # Standardize column names with lowercase letters and no spaces
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    # Parse and sort by time
+    df["timestamp"] = pd.to_datetime(df[timestampe])
+    df = df.sort_values(ts_col).reset_index(drop=True)
+
+    return df
+
+
+# Helper functions for velocity and acceleration state vector calculations
+
+def zero_handled_log(series: pd.Series) -> pd.Series:
+    return np.log(series.replace(0, np.nan))
+
+def simple_moving_average(series: pd.Series, window: int) -> pd.Series:
+    return series.rolling(window, min_periods=1).mean()
+
+def weighted_moving_average(series: pd.Series, window: int) -> pd.Series:
+    weights = np.arange(1, window + 1)
+    return series.rolling(window).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
+
+def hull_moving_average(series: pd.Series, window: int) -> pd.Series:
+    half_length = int(window / 2)
+    sqrt_length = int(np.sqrt(window))
+    wma_half = weighted_moving_average(series, half_length)
+    wma_full = weighted_moving_average(series, window)
+    hull_ma = weighted_moving_average(2 * wma_half - wma_full, sqrt_length)
+    return hull_ma
+
+def raw_velocity(series: pd.Series, time_shift: int) -> tuple[pd.Series, pd.Series]:
+    velocity = (series - series.shift(time_shift))/series.shift(time_shift)
+    acceleration = velocity - velocity.shift(time_shift)
+    return velocity, acceleration
+
+def log_velocity(series: pd.Series, time_shift: int) -> tuple[pd.Series, pd.Series]:
+    log_velocity = zero_handled_log(series) - zero_handled_log(series.shift(time_shift))
+    log_acceleration = log_velocity - log_velocity.shift(time_shift)
+    return log_velocity, log_acceleration
+
+def calculate_state_vectors(
+    series: pd.Series,
+    smoothing_selections: list[str],
+    window_sizes: list[int],
+    log_options: list[bool],
+    time_shifts: list[int],
+) -> pd.DataFrame:
+    """
+    For each combination of smoothing, window, log/raw, and time_shift,
+    compute velocity and acceleration and return them as a DataFrame
+    whose index matches `series.index`.
+
+    Column name convention:
+        smoothingtype_window_log|raw_shift_vel
+        smoothingtype_window_log|raw_shift_acc
+    """
+    features: dict[str, pd.Series] = {}
+
+    for smooth_name in smoothing_selections:
+        for window in window_sizes:
+            if smooth_name == "sma":
+                smooth = simple_moving_average(series, window)
+            elif smooth_name == "wma":
+                smooth = weighted_moving_average(series, window)
+            elif smooth_name == "hma":
+                smooth = hull_moving_average(series, window)
+            else:
+                # holding for future filtering / smoothing methods
+                continue
+
+            for use_log in log_options:
+                for shift in time_shifts:
+                    if use_log:
+                        v, a = log_velocity(smooth, shift)
+                        prefix = f"{smooth_name}_window{window}_log_shift{shift}"
+                    else:
+                        v, a = raw_velocity(smooth, shift)
+                        prefix = f"{smooth_name}_window{window}_raw_shift{shift}"
+
+                    features[f"{prefix}_vel"] = v
+                    features[f"{prefix}_acc"] = a
+
+    state_df = pd.DataFrame(features, index=series.index)
+    return state_df
+
+def clean_processed(
+    in_path: str = IN_FILE_PATH,
+    out_path: str = OUT_FILE_PATH,
+    smoothing_selections: list[str] = None,
+    window_sizes: list[int] = None,
+    log_options: list[bool] = None,
+    time_shifts: list[int] = None,
+) -> pd.DataFrame:
+    """
+    1. Read and sort TQQQ data
+    2. Compute state vectors based on the close price and features provided by user
+    3. Concatenate state vectors onto original DataFrame
+    4. Write result to CSV and return the DataFrame
+    """
+    df = read_tqqq_data(in_path)
+
+    smoothing_selections = smoothing_selections
+    window_sizes = window_sizes
+    log_options = log_options
+    time_shifts = time_shifts
+
+    state_df = calculate_state_vectors(df["close"], smoothing_selections, window_sizes, log_options, time_shifts)
+
+    df_out = pd.concat([df, state_df], axis=1)
+    df_out.to_csv(out_path, index=False)
+    print(f"State vector file saved to {out_path}")
+
+    return df_out
+
+if __name__ == "__main__":
+    clean_processed(IN_FILE_PATH,OUT_FILE_PATH,DEFAULT_SMOOTHING_SELECTIONS,DEFAULT_WINDOW_SIZES,DEFAULT_LOG_OPTIONS,DEFAULT_TIME_SHIFTS)
