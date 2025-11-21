@@ -3,7 +3,7 @@ import numpy as np
 
 # Updated Vector Calculations for Trading Bot
 
-# Example Selections and Parameters 
+# Example Selections and Parameters
 
 #Read in and out for CSV - will change when using API calls
 IN_FILE_PATH = "raw_tqqq_data.csv"
@@ -14,6 +14,13 @@ DEFAULT_SMOOTHING_SELECTIONS = ["sma", "wma", "hma"]
 DEFAULT_WINDOW_SIZES = [5, 8, 10]
 DEFAULT_LOG_OPTIONS = [True, False]
 DEFAULT_TIME_SHIFTS = [1, 2, 3]
+
+def normalize_series(series: pd.Series) -> pd.Series:
+    p95 = series.quantile(0.95)
+
+    if p95 == 0 or np.isnan(p95):
+        return series
+    return series / p95
 
 
 def read_tqqq_data(in_file_path: str) -> pd.DataFrame:
@@ -27,8 +34,8 @@ def read_tqqq_data(in_file_path: str) -> pd.DataFrame:
     df.columns = [c.strip().lower() for c in df.columns]
 
     # Parse and sort by time
-    df["timestamp"] = pd.to_datetime(df[timestampe])
-    df = df.sort_values(ts_col).reset_index(drop=True)
+    df["timestamp"] = pd.to_datetime(df['timestamp'])
+    df = df.sort_values('timestamp').reset_index(drop=True)
 
     return df
 
@@ -39,13 +46,16 @@ def zero_handled_log(series: pd.Series) -> pd.Series:
     return np.log(series.replace(0, np.nan))
 
 def simple_moving_average(series: pd.Series, window: int) -> pd.Series:
+    series = normalize_series(series)
     return series.rolling(window, min_periods=1).mean()
 
 def weighted_moving_average(series: pd.Series, window: int) -> pd.Series:
+    series = normalize_series(series)
     weights = np.arange(1, window + 1)
     return series.rolling(window).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
 
 def hull_moving_average(series: pd.Series, window: int) -> pd.Series:
+    series = normalize_series(series)
     half_length = int(window / 2)
     sqrt_length = int(np.sqrt(window))
     wma_half = weighted_moving_average(series, half_length)
